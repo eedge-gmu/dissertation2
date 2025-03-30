@@ -1,0 +1,87 @@
+# This file contains multiple scripts for creation and analysis of Zeek connection logs
+
+from zat.log_to_dataframe import LogToDataFrame
+import matplotlib.pyplot as plt 
+import pandas as pd
+from abuseipdb_wrapper import AbuseIPDB
+import plotly.express as px
+import math
+import pickle
+from datetime import datetime
+
+# Create a Pandas dataframe from Zeek logs
+
+# log_to_df = LogToDataFrame()
+# zeek_df = pd.concat([log_to_df.create_dataframe(r'baselineattacktraffic/0909conn.00_00_00-00_00_00.log', ts_index=False),log_to_df.create_dataframe(r'baselineattacktraffic/0910conn.00_00_00-00_00_00.log', ts_index=False),log_to_df.create_dataframe(r'baselineattacktraffic/0911conn.00_00_00-00_00_00.log', ts_index=False), log_to_df.create_dataframe(r'baselineattacktraffic/0912conn.00_00_00-00_00_00.log', ts_index=False), log_to_df.create_dataframe(r'baselineattacktraffic/0913conn.00_00_00-00_00_00.log', ts_index=False), log_to_df.create_dataframe(r'baselineattacktraffic/0914conn.00_00_00-00_00_00.log', ts_index=False), log_to_df.create_dataframe(r'baselineattacktraffic/0915conn.00_00_00-00_00_00.log', ts_index=False), log_to_df.create_dataframe(r'baselineattacktraffic/0916conn.00_00_00-00_00_00.log', ts_index=False), log_to_df.create_dataframe(r'baselineattacktraffic/0917conn.00_00_00-00_00_00.log', ts_index=False), log_to_df.create_dataframe(r'baselineattacktraffic/0918conn.00_00_00-00_00_00.log', ts_index=False), log_to_df.create_dataframe(r'baselineattacktraffic/0919conn.00_00_00-00_00_00.log', ts_index=False), log_to_df.create_dataframe(r'baselineattacktraffic/0920conn.00_00_00-00_00_00.log', ts_index=False), log_to_df.create_dataframe(r'baselineattacktraffic/0921conn.00_00_00-00_00_00.log', ts_index=False), log_to_df.create_dataframe(r'baselineattacktraffic/0922conn.00_00_00-00_00_00.log', ts_index=False)])
+# zeek_df.to_pickle(r'baselineattacktraffic/connections.pkl')
+zeek_df = pd.read_pickle(r'baselineattacktraffic/connections.pkl')
+zeek_df = zeek_df.sort_values(by='ts').reset_index(drop=True)
+
+# Filter for no responses as indicated with no response packets and connection state of 0 to external interface ("108.48.141.213")
+unsolicited_zeek_df = zeek_df[(zeek_df['id.resp_h']=='108.48.141.213') & (zeek_df['resp_pkts'] == 0)]
+
+# Build my abuse confidence data based on origination IP
+# Must be executed over multiple days to completely populate db_file for number of unique IP addresses in the dataset
+API_KEY = '**********************************'
+abuse = AbuseIPDB(api_key=API_KEY, db_file='abuseipdb.json')
+abuse.add_ip_list(unsolicited_zeek_df['id.orig_h'].unique().tolist())
+abuse.check()
+abusedf = pd.DataFrame(abuse.get_db().values())
+
+modabusedf = abusedf[['abuseConfidenceScore', 'ipAddress', 'countryCode', 'domain', 'isp', 'hostnames']]
+modabusedf.rename(columns={'ipAddress': 'id.orig_h'}, inplace=True)
+
+# Merged the abuse confidence data with unsolicited dataset
+enriched_unsolicited_zeek_df = unsolicited_zeek_df.merge(modabusedf, how='left')
+
+greynoise_list = list(map(str.casefold,['QuadMetrics', 'Academy for Internet Research', 'ESET', 'RWTH', 'Net Systems Research', 'TurnitinBot', 'Qualys', 'Onyphe', 'IPinfo.io', 'Intrinsec', 'Babbar', 'University of Colorado', 'Open Port Statistics', 'CyberResilience', 'SOCRadar', 'Shodan.io', 'Twitter', 'GPTBot', 'A10 Networks', 'FortifyData', 'BitSight', 'SEMrush', 'DataForSEO ', 'University of California San Diego', 'BinaryEdge.io', 'Detectify', 'University of California Berkeley', 'Inter-University Computation Center', 'Netsecscan', 'Errata Security', 'Stanford University', 'Cortex Xpanse', 'Driftnet', 'Applebot', 'National Cyber Security Centre', 'Caida', 'OpenIntel.nl', 'Security-Research.org', 'SecurityTrails', 'Bytedance', 'Neeva', 'facebook.com', 'Arbor Networks', 'Cambridge Cybercrime Centre', 'Shadowserver ', 'Censys', 'Sogou', 'ServCity', 'Cymru', 'Brandwatch', 'CERT-FR', 'Common Crawl', 'Domainstats', 'CISA ', 'NEKST', 'SEOkicks ', 'DataGrid Surface', 'CyberGreen', 'Alpha Strike Labs', 'Cloud System Networks', 'Pinterest ', 'AWS Security', 'CriminalIP', 'Sharashka', 'AdScore', 'Dataprovider.com', 'fofa.so', 'Ruhr-Universitat Bochum', 'FireEye', 'ANT Lab', 'DomainTools', 'BLEXBot ', 'Rapid7', 'Ampere Innotech', 'CrowdStrike', 'Project25499 ', 'NetCraft', 'University of the Free State', 'Archive.org', 'bufferover.run', 'Qwant', 'Technical University of Munich', 'VeriSign', 'University of Michigan', 'Ahrefs', 'Bit Discovery', 'Rackspace', 'Phenome.ca', 'research-scanner.com', 'Brown University', 'Malware Patrol', 'Georgia Tech Research Scanner', 'Dutch Institute for Vulnerability Disclosure', 'ProbeTheNet', 'FindMalware', 'ExposureMonitoring', 'Knoq', 'Natlas', 'LTX71', 'IPIP.NET', 'Lo-Sec', 'Kudelski', 'Mandiant', 'Majestic', 'Moz Dot', 'Palo Alto Networks', 'Mail.Ru', 'FH Muenster University', 'Ionos', 'SBA Research', 'GDNplus']))
+enriched_unsolicited_5tuple_df = enriched_unsolicited_zeek_df[['ts','id.orig_h','id.orig_p', 'id.resp_h', 'id.resp_p','proto','abuseConfidenceScore', 'countryCode', 'domain', 'isp', 'hostnames']]
+enriched_unsolicited_5tuple_df['isp'].fillna("", inplace=True)
+enriched_unsolicited_5tuple_df['domain'].fillna("", inplace=True)
+enriched_unsolicited_5tuple_df['hostnames'] = enriched_unsolicited_5tuple_df['hostnames'].apply(lambda d: d if isinstance(d, list) else [])
+
+# create category field 
+# benign traffic is abuseconfidence=0 and in greynoise_list
+# malicious traffic is abuseconfidence > 100
+# grey traffic is unknown or less confident than 100 but greater than 0
+
+def categorize(row):
+    if row['abuseConfidenceScore'] == 0 or any(s2 in row.get('domain', default='no_domain').casefold() for s2 in greynoise_list) or any(s2 in row.get('isp', default='no_isp').casefold() for s2 in greynoise_list) or any(s2 in ','.join(map(str.casefold, row.get('hostnames',default=['no_hostnames']))) for s2 in greynoise_list):
+        return('benign')
+    elif row['abuseConfidenceScore'] == 100:
+        return('malicious')
+    else:
+        return('grey')
+
+# sets the category field based on a combination of the greynoise benign list and the abuseConfidenceScore of abuseIPDB
+enriched_unsolicited_5tuple_df['category'] = enriched_unsolicited_5tuple_df.apply(categorize, axis=1)
+# Sets time blocks for each connection
+enriched_unsolicited_5tuple_df['hour'] = pd.Series([t.floor(freq='h') for t in enriched_unsolicited_5tuple_df.ts])
+enriched_unsolicited_5tuple_df['day'] = pd.Series([t.floor(freq='d') for t in enriched_unsolicited_5tuple_df.ts])
+enriched_unsolicited_5tuple_df['min'] = pd.Series([t.floor(freq='min') for t in enriched_unsolicited_5tuple_df.ts])
+
+# Graph all baseline connections by minute
+groupbymin = enriched_unsolicited_5tuple_df.groupby(['min']).size().reset_index(name='count')
+all_fig = px.scatter(groupbymin, x='min', y='count', title="Unsolicited Traffic (baseline data)", labels={"min": "Time (minutes)", "count": "Connection Count"}, height = 1000, render_mode='svg')
+all_fig.write_html(r'baselineattacktraffic/all_fig.html')
+
+# Graph distribution of reputations by category
+cat_colors = {'malicious':'red', 'grey':'slategrey', 'benign':'green'}
+reputation = enriched_unsolicited_5tuple_df.groupby(by=['category']).size().reset_index(name="counts")
+px.bar(reputation, x=reputation["counts"].map(lambda x: (x/reputation['counts'].sum()*100)), y="category", orientation='h', color_discrete_map=cat_colors, color='category', title="Unsolicited Traffic Reputation Distribution (baseline data)", labels={"x": "Percentage", "category": "Reputation Category"}, text_auto=True, width=600).show()
+
+# Graph connection count over time (days) by category
+groupbydaycat = enriched_unsolicited_5tuple_df.groupby(['day', 'category']).size().reset_index(name='count')
+fig_groupbydaycat = px.line(groupbydaycat[(groupbydaycat['day'] != datetime(2024,9,9, 0,0,0)) & (groupbydaycat['day'] != datetime(2024,9,23, 0,0,0))], x='day', y='count', title="Unsolicited Categorized Traffic (baseline data)", labels={"day": "Time (days)", "count": "Connection Count"},color = 'category', render_mode='svg', height = 1000, markers=True, color_discrete_map=cat_colors)#, log_y=True)#, height = 1000, render_mode='svg', log_y=True, range_y=[100,4500])#,trendline_scope="overall")
+fig_groupbydaycat.show()
+fig_groupbydaycat.write_html(r'baselineattacktraffic/fig_groupbydaycat.html')
+
+# Graph connections per hour for 103.102.230.2
+bl_dataset = pd.read_pickle(r'baselineattacktraffic/enriched_unsolicited_5tuple_conn.pkl')
+rd_dataset = pd.read_pickle(r'redirectattacktraffic/enriched_redirected_5tuple_conn.pkl')
+colorlist = [ x for xs in [px.colors.qualitative.Plotly, px.colors.qualitative.D3, px.colors.qualitative.G10, px.colors.qualitative.T10, px.colors.qualitative.Alphabet, px.colors.qualitative.Dark24, px.colors.qualitative.Light24, px.colors.qualitative.Set1, px.colors.qualitative.Pastel1, px.colors.qualitative.Dark2, px.colors.qualitative.Set2, px.colors.qualitative.Pastel2, px.colors.qualitative.Set3,px.colors.qualitative.Antique, px.colors.qualitative.Bold, px.colors.qualitative.Pastel, px.colors.qualitative.Prism,px.colors.qualitative.Safe, px.colors.qualitative.Vivid] for x in xs]
+common_mal_ips = list(set(bl_dataset[(bl_dataset['day'] != datetime(2024,9,9, 0,0,0)) & (bl_dataset['day'] != datetime(2024,9,23, 0,0,0))][bl_dataset[(bl_dataset['day'] != datetime(2024,9,9, 0,0,0)) & (bl_dataset['day'] != datetime(2024,9,23, 0,0,0))]['category'] == 'malicious']['id.orig_h']) & set(rd_dataset[(rd_dataset['day'] != datetime(2024,11,11, 0,0,0)) & (rd_dataset['day'] != datetime(2024,12,13, 0,0,0))][rd_dataset[(rd_dataset['day'] != datetime(2024,11,11, 0,0,0)) & (rd_dataset['day'] != datetime(2024,12,13, 0,0,0))]['category'] == 'malicious']['id.orig_h']))
+common_mal_ips.sort()
+bl_dataset_common = bl_dataset[bl_dataset['id.orig_h'].isin(common_mal_ips)]
+bl_groupbyhr = bl_dataset_common[(bl_dataset_common['day'] != datetime(2024,9,9, 0,0,0)) & (bl_dataset_common['day'] != datetime(2024,9,23, 0,0,0))].groupby(['hour', 'id.orig_h']).size().reset_index(name='count')
+fig_bl_groupbyhr_ip = px.scatter(bl_groupbyhr[bl_groupbyhr['id.orig_h']=='103.102.230.2'], 'hour', 'count',color = 'id.orig_h', render_mode='svg', height = 1000,  color_discrete_sequence= colorlist, category_orders={'id.orig_h':common_mal_ips}, title="Unsolicited Malicious IP - 103.102.230.2 (baseline data)", labels={"hour": "Time (hours)", "count": "Connection Count", 'id.orig_h': 'Source IP address'})
