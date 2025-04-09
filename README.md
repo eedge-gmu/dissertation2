@@ -1,4 +1,5 @@
-# The datasets consist of 12 columns (in parentheses):
+# EVALUATING THE IMPACT OF HONEYNETS ON MALICIOUS ACTIVITY IN HOME NETWORK ENVIRONMENTS
+## The datasets consist of 12 columns (in parentheses):
 
 - timestamp (ts) 
 - source IP address (id.orig_h)
